@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Leaphy Font API Service</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .header {
+            background: #f5f5f5;
+            padding: 20px;
+            border-radius: 5px;
+            margin-bottom: 30px;
+        }
+        .endpoint {
+            background: #f9f9f9;
+            padding: 15px;
+            border-left: 4px solid #3498db;
+            margin-bottom: 20px;
+        }
+        code {
+            background: #eee;
+            padding: 2px 5px;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Font API Service</h1>
+        <p>Self-hosted Google Fonts-like API service</p>
+    </div>
+
+    <h2>API Endpoints</h2>
+
+    <div class="endpoint">
+        <h3>Font CSS API</h3>
+        <p><code>GET /css?family=FontName:weight:subset</code></p>
+        <p>Example: <a href="/css?family=OpenSans:400,700:latin">/css?family=OpenSans:400,700:latin</a></p>
+    </div>
+
+    <div class="endpoint">
+        <h3>Font Preview</h3>
+        <p><code>GET /preview</code></p>
+        <p>Example: <a href="/preview">/preview</a></p>
+    </div>
+
+    <h2>How to Use</h2>
+    <pre><code>&lt;link rel="stylesheet"
+      href="https://your-domain/api/fonts/css?family=Roboto:400,700:latin"&gt;
+
+&lt;style&gt;
+  body {
+    font-family: 'Roboto', sans-serif;
+    font-weight: 400;
+  }
+
+  h1 {
+    font-weight: 700;
+  }
+&lt;/style&gt;</code></pre>
+
+    <footer>
+        <p>Powered by aiohttp | Font API Service</p>
+    </footer>
+</body>
+</html>

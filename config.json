@@ -1,0 +1,6 @@
+{
+    "BASE_URL":"http://10.0.0.247:8080/",
+    "CACHE_MAX_AGE": 3600,
+    "FONT_MAX_AGE": 31536000,
+    "LOG_RETENTION_DAYS": 7
+}

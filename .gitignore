@@ -1,0 +1,6 @@
+/fonts/
+/logs/
+/data/
+.idea
+.venv
+__pycache__

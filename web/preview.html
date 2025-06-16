@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Font Demo Viewer</title>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        .controls {
+            margin-bottom: 30px;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 5px;
+        }
+        .font-container {
+            margin-bottom: 30px;
+            padding: 15px;
+            border: 1px solid #eee;
+            border-radius: 5px;
+            background: #fafafa;
+        }
+        .font-name {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #2c3e50;
+        }
+        .font-meta {
+            font-size: 14px;
+            color: #7f8c8d;
+            margin-bottom: 10px;
+        }
+        .font-demo {
+            font-size: 24px;
+            line-height: 1.5;
+            padding: 15px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            margin-bottom: 10px;
+            min-height: 60px;
+        }
+        #testText {
+            padding: 10px;
+            width: 500px;
+            max-width: 100%;
+            font-size: 16px;
+            margin-right: 10px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+        }
+        button {
+            padding: 10px 20px;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background: #2980b9;
+        }
+        .loading {
+            color: #7f8c8d;
+            font-style: italic;
+        }
+        .actions {
+            margin-top: 10px;
+        }
+        .actions a {
+            margin-right: 15px;
+            color: #3498db;
+            text-decoration: none;
+        }
+        .actions a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <h1>Font Demo Viewer</h1>
+
+    <div class="controls">
+        <h3>Test Text:</h3>
+        <input type="text" id="testText"
+               value="ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz 0123456789 你好世界 字体测试" />
+        <button onclick="updateAllDemos()">Update All Fonts</button>
+        <p>Enter text above and click the button to see how it renders in each font</p>
+    </div>
+
+    <div id="fontsList">
+        <p class="loading">Loading available fonts...</p>
+    </div>
+
+    <script>
+        // Fetch list of available fonts from the server
+        async function loadFontsList() {
+            try {
+                const response = await fetch('/list');
+                if (!response.ok) {
+                    throw new Error('Failed to load fonts list');
+                }
+
+                const data = await response.json();
+                if (data.status !== 'success') {
+                    throw new Error(data.message || 'Invalid response from server');
+                }
+
+                renderFontsList(data.fonts);
+            } catch (error) {
+                document.getElementById('fontsList').innerHTML =
+                    `<p style="color: red;">Error loading fonts: ${error.message}</p>`;
+            }
+        }
+
+        // Render the list of fonts
+        function renderFontsList(fonts) {
+            const container = document.getElementById('fontsList');
+            if (fonts.length === 0) {
+                container.innerHTML = '<p>No fonts found in the fonts directory.</p>';
+                return;
+            }
+
+            container.innerHTML = fonts.map(font => `
+                <div class="font-container" id="font-${font.name}">
+                    <div class="font-name">${font.name}</div>
+                    <div class="font-meta">
+                        File: ${font.filename} | Size: ${font.size_mb} MB
+                    </div>
+                    <div class="font-demo"
+                         style="font-family: '${font.name}', sans-serif"
+                         data-fontname="${font.name}">
+                        Loading font demo...
+                    </div>
+                    <div class="actions">
+<!--                        <a href="/font?family=${encodeURIComponent(font.name)}"-->
+<!--                           download="${font.name}.woff2">Download Subset</a>-->
+                        <a href="#" onclick="loadFontDemo('${font.name}'); return false;">Reload Demo</a>
+                    </div>
+                </div>
+            `).join('');
+
+            // Load demos for all fonts
+            fonts.forEach(font => {
+                loadFontDemo(font.name);
+            });
+        }
+
+        // Load demo for a single font
+        function loadFontDemo(fontName, customText) {
+            const demoElement = document.querySelector(`.font-demo[data-fontname="${fontName}"]`);
+            if (!demoElement) return;
+
+            const defaultText = `${fontName} - ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz 0123456789 你好世界`;
+            const text = customText || defaultText;
+
+            demoElement.textContent = text;
+            demoElement.classList.add('loading');
+
+            // Create and load the font CSS
+            const link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = `/css?family=${encodeURIComponent(fontName)}`;
+            link.onload = () => {
+                demoElement.classList.remove('loading');
+            };
+            document.head.appendChild(link);
+        }
+
+        // Update all demos with custom text
+        function updateAllDemos() {
+            const text = document.getElementById('testText').value.trim();
+            if (!text) {
+                alert('Please enter some text to preview');
+                return;
+            }
+
+            const demos = document.querySelectorAll('.font-demo');
+            demos.forEach(demo => {
+                const fontName = demo.dataset.fontname;
+                demo.textContent = `${fontName} - ${text}`;
+
+                // Reload the font with new text
+                loadFontDemo(fontName, text);
+            });
+        }
+
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', loadFontsList);
+    </script>
+</body>
+</html>
