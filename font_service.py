@@ -131,7 +131,6 @@ class FontService:
             if meta_data_file_path.exists() and not force_rebuild:
                 skipped_count += 1
             else:
-            # 添加到任务列表
                 tasks.append({
                     "subset": subset,
                     "subset_name": subset_name,
@@ -144,19 +143,16 @@ class FontService:
         # 获取CPU核心数
         num_cores = int(multiprocessing.cpu_count() / 2 )
 
-        # 如果有需要处理的任务
         if tasks:
             print(f"Processing {len(tasks)} subsets using {num_cores} cores...")
 
             # 使用进程池执行任务
             with concurrent.futures.ProcessPoolExecutor(max_workers=num_cores) as executor:
-                # 提交所有任务到进程池
                 futures = {}
                 for task in tasks:
                     future = executor.submit(self._process_single_subset, task)
                     futures[future] = task["subset_name"]
 
-                # 等待所有任务完成并处理结果
                 for future in concurrent.futures.as_completed(futures):
                     subset_name = futures[future]
                     try:
@@ -190,8 +186,8 @@ class FontService:
                     "subset_range": subset,
                     "woff2_file_name": (woff2_file_name + ".woff2"),
                     "subset": subset_name,
-                    "coverage": coverage,  # 添加覆盖率信息
-                    "supported_chars": len(actual_set)  # 实际支持的字符数
+                    "coverage": coverage,
+                    "supported_chars": len(actual_set)
                 }
                 meta_data_file_path.write_text(json.dumps(meta_data, indent=2))
 
@@ -210,15 +206,12 @@ class FontService:
             print(f"跳过空子集 {subset_name}")
             return f"跳过空子集 {subset_name}"
 
-        # 计算字体实际支持的字符交集
         supported_set = self.get_font_supported_chars(_font_path)
         actual_set = requested_set & supported_set
 
-        # 计算覆盖率和缺失字符
         coverage = len(actual_set) / len(requested_set) if requested_set else 0
         missing_chars = requested_set - supported_set
 
-        # 如果没有实际支持的字符，跳过生成
         if not actual_set:
             return f"跳过无支持字符的子集 {subset_name}，覆盖率: {coverage:.1%}"
 

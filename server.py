@@ -138,10 +138,8 @@ async def handel_font_list(request):
                     "size_mb": round(file_size / (1024 * 1024), 2),
                     "url": f"{BASE_URL}/font?family={font_name}"})
 
-        # 按字体名排序
         fonts.sort(key=lambda x: x["name"].lower())
 
-        # 构建响应数据
         response_data = {
             "status": "success",
             "count": len(fonts),
