@@ -1,15 +1,11 @@
-import hashlib
-import io
 import json
 import logging
-from importlib.metadata import metadata
+import os
 from pathlib import Path
-from sys import meta_path
 from textwrap import dedent
 from typing import Dict
 
 from aiohttp import web
-import os
 
 from font_service import FontService
 from utils import find_files_by_extension
@@ -28,7 +24,9 @@ config_file = open("./config.json", "r")
 config: Dict = json.loads(config_file.read())
 config_file.close()
 
+ADDRESS = config["ADDRESS"]
 BASE_URL: str = config["BASE_URL"]
+
 CACHE_MAX_AGE: int = config["CACHE_MAX_AGE"]
 FONT_MAX_AGE: int = config["FONT_MAX_AGE"]
 LOG_RETENTION_DAYS: int = config["LOG_RETENTION_DAYS"]
@@ -163,8 +161,23 @@ async def handel_font_list(request):
             content_type="application/json"
         )
 
+
+@web.middleware
+async def cors_middleware(request, handler):
+    # 处理请求并获取响应
+    response = await handler(request)
+
+    # 添加 CORS 头部
+    response.headers.update({
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Allow-Credentials': 'true'  # 如果需要凭证
+    })
+    return response
+
 async def init_app():
-    app = web.Application()
+    app = web.Application(middlewares=[cors_middleware])
     front_server = app["font_service"] = FontService()
     for ttf in find_files_by_extension(FONT_DIR, ["ttf", "otf"]):
         front_server.create_subset(ttf.name)
@@ -180,4 +193,4 @@ async def init_app():
 
 
 if __name__ == "__main__":
-    web.run_app(init_app(), port=8080)
+    web.run_app(init_app(), host=ADDRESS[0], port=ADDRESS[1])
