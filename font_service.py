@@ -99,8 +99,19 @@ class FontService:
                 return f.read()
         return None
 
+    def get_font_supported_chars(self, font_path):
+        """获取字体实际支持的字符集"""
+        font = TTFont(font_path)
+        return set(font.getBestCmap().keys())
+
+    def get_intersection_subset(self, font_path, requested_set):
+        """计算请求字符集与字体支持字符集的交集"""
+        supported_set = self.get_font_supported_chars(font_path)
+        return requested_set & supported_set
+
     def create_subset(self, font_file_name, force_rebuild: bool = False):
-        """创建字体子集（跳过已存在文件）"""
+        """创建字体子集（跳过已存在元数据）"""
+        print(f"Start handling font: {font_file_name})")
         font_family = font_file_name.removesuffix(".ttf")
         font_family = font_family.removesuffix(".otf")
         _font_path = FONT_DIR / font_file_name
@@ -114,10 +125,10 @@ class FontService:
         for subset_name, subset in enumerate(SUBSET):
             subset_name = str(subset_name)
             woff2_file_name = f"{self.get_subset_cache_key(font_family, subset_name)}"
-            cached_font_file = CACHE_DIR / (woff2_file_name + ".woff2")
+            meta_data_file_path = meta_data_file_dir / (woff2_file_name + ".json")
 
             # 检查文件是否存在且不需要重建
-            if cached_font_file.exists() and not force_rebuild:
+            if meta_data_file_path.exists() and not force_rebuild:
                 skipped_count += 1
             else:
             # 添加到任务列表
@@ -162,18 +173,30 @@ class FontService:
             woff2_file_name = f"{self.get_subset_cache_key(font_family, subset_name)}"
             meta_data_file_path = meta_data_file_dir / (woff2_file_name + ".json")
 
+            # 计算实际覆盖率
+            requested_set = self.parse_unicode_range(subset)
+            if requested_set:
+                supported_set = self.get_font_supported_chars(_font_path)
+                actual_set = requested_set & supported_set
+                coverage = len(actual_set) / len(requested_set)
+            else:
+                actual_set = 0.0
+                coverage = 0.0
+
             # 检查元数据文件是否需要生成
             if not meta_data_file_path.exists() or force_rebuild:
                 meta_data = {
                     "font_family": font_family,
                     "subset_range": subset,
                     "woff2_file_name": (woff2_file_name + ".woff2"),
-                    "subset": subset_name
+                    "subset": subset_name,
+                    "coverage": coverage,  # 添加覆盖率信息
+                    "supported_chars": len(actual_set)  # 实际支持的字符数
                 }
-                meta_data_file_path.write_text(json.dumps(meta_data))
+                meta_data_file_path.write_text(json.dumps(meta_data, indent=2))
 
     def _process_single_subset(self, task):
-        """处理单个字体子集"""
+        """处理单个字体子集 - 使用实际支持的字符交集"""
         subset = task["subset"]
         subset_name = task["subset_name"]
         woff2_file_name = task["woff2_file_name"]
@@ -181,18 +204,63 @@ class FontService:
 
         cached_font_file = CACHE_DIR / (woff2_file_name + ".woff2")
 
+        # 解析请求的Unicode范围
+        requested_set = self.parse_unicode_range(subset)
+        if not requested_set:
+            print(f"跳过空子集 {subset_name}")
+            return f"跳过空子集 {subset_name}"
+
+        # 计算字体实际支持的字符交集
+        supported_set = self.get_font_supported_chars(_font_path)
+        actual_set = requested_set & supported_set
+
+        # 计算覆盖率和缺失字符
+        coverage = len(actual_set) / len(requested_set) if requested_set else 0
+        missing_chars = requested_set - supported_set
+
+        # 如果没有实际支持的字符，跳过生成
+        if not actual_set:
+            return f"跳过无支持字符的子集 {subset_name}，覆盖率: {coverage:.1%}"
+
+        # 记录字符覆盖情况
+        print(f"子集 {subset_name}: 请求字符 {len(requested_set)}，支持 {len(actual_set)}，覆盖率: {coverage:.1%}")
+        if missing_chars:
+            missing_hex = [f"U+{hex(c)[2:].upper()}" for c in sorted(missing_chars)]
+            print(f"缺失字符: {', '.join(missing_hex[:10])}{'...' if len(missing_hex) > 10 else ''}")
+
         # 生成子集字体
         options = Options()
-        options.flavor = ".woff2"
-        options.drop_tables += ['FFTM']
+        options.flavor = "woff2"
         options.with_zopfli = True
-        subsetter = Subsetter(options=options)
-        subsetter.populate(unicodes=self.parse_unicode_range(subset))
-        font = TTFont(file=_font_path, ignoreDecompileErrors=True)
-        subsetter.subset(font)
-        font.save(cached_font_file,  reorderTables=False)
+        options.drop_tables = ['FFTM', 'VDMX', 'hdmx']  # 安全删除的表
 
-        return f"Generated subset {subset_name}: {woff2_file_name}.woff2"
+        try:
+            font = TTFont(file=_font_path, ignoreDecompileErrors=True, recalcBBoxes=False)
+
+            # 创建subsetter并设置选项
+            subsetter = Subsetter(options=options)
+            subsetter.populate(unicodes=actual_set)
+
+            try:
+                subsetter.subset(font)
+            except Exception as e:
+                print(f"子集化警告: {str(e)} - 尝试简化处理")
+                # 尝试更简单的子集化方法
+                options.drop_tables = []
+                subsetter = Subsetter(options=options)
+                subsetter.populate(unicodes=actual_set)
+                subsetter.subset(font)
+
+            # 保存生成的字体
+            os.makedirs(os.path.dirname(cached_font_file), exist_ok=True)
+            font.save(cached_font_file)
+
+            return f"生成子集 {subset_name} ({len(actual_set)}字符, 覆盖率: {coverage:.1%})"
+
+        except Exception as e:
+            error_msg = f"处理子集 {subset_name} 失败: {str(e)}"
+            print(error_msg)
+            return error_msg
 
 
         # TODO
@@ -212,5 +280,6 @@ class FontService:
 if __name__ == "__main__":
     font_service = FontService()
     # font_service.create_subset("OpenSans")
-    font_service.create_subset("Satisfy")
-    font_service.create_subset("Noto Sans SC")
+    font_service.create_subset("Satisfy.ttf")
+    font_service.create_subset("Fira Code.ttf")
+    # font_service.create_subset("Noto Sans SC.ttf")

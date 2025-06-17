@@ -85,6 +85,10 @@ async def handle_css(request):
                 meta_data_list = font_service.get_meta_data(font_name)
                 # 生成每个子集的@font-face规则
                 for meta_data in meta_data_list:
+                    coverage = meta_data.get("coverage", 1.0)
+                    if coverage <= 0:
+                        continue  # 跳过覆盖率为0的子集
+
                     font_url = f"/s/{meta_data['woff2_file_name']}"
                     unicode_range = meta_data["subset_range"]
                     css_rules.append(dedent(f"""
