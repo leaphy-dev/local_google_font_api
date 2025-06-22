@@ -1,3 +1,4 @@
+import functools
 import json
 import logging
 import os
@@ -31,22 +32,17 @@ CACHE_MAX_AGE: int = config["CACHE_MAX_AGE"]
 FONT_MAX_AGE: int = config["FONT_MAX_AGE"]
 LOG_RETENTION_DAYS: int = config["LOG_RETENTION_DAYS"]
 
+LOG_DIR.mkdir(exist_ok=True, parents=True)
 
+main_logger = logging.getLogger(__name__)
+handler = logging.StreamHandler()
+handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+main_logger.addHandler(handler)
+main_logger.setLevel(logging.INFO)
+main_logger.propagate = False
 
+font_service = FontService(logger=main_logger)
 
-def setup_logging():
-    """配置日志系统"""
-    LOG_DIR.mkdir(exist_ok=True, parents=True)
-
-    # 主日志
-    logging.basicConfig(
-        level=logging.WARNING,
-        format='%(asctime)s [%(levelname)s] %(message)s',
-        handlers=[
-            logging.StreamHandler()
-        ]
-    )
-setup_logging()
 
 
 async def handle_index(request):
@@ -57,53 +53,57 @@ async def handle_index(request):
 
     return web.FileResponse(index_file)
 
+@functools.lru_cache()
+def _generate_css(font_families: frozenset, display: str) -> str:
+    """生成css,加上cache大约快了5ms"""
+    css_rules: list[str]= []
+    for font_spec in font_families:
+        parts = font_spec.split(':')
+        font_name: str = parts[0]
+        variants = parts[1].split(',') if len(parts) > 1 else ['400']
+        style: str = "normal"
+
+        for variant in variants:
+            if 'italic' in variant:
+                style = "italic"
+                weight = variant.replace('italic', '') or '400'
+            else:
+                weight = variant
+            meta_data_list: list = font_service.get_meta_data(font_name)
+            # 生成每个子集的@font-face规则
+            for meta_data in meta_data_list:
+                coverage = meta_data.get("coverage", 1.0)
+                if coverage <= 0:
+                    continue  # 跳过覆盖率为0的子集
+
+                font_url: str = f"/s/{meta_data['woff2_file_name']}"
+                unicode_range = meta_data["subset_range"]
+                css_rules.append(dedent(f"""
+                    /* [{meta_data['subset']}] */
+                    @font-face {{
+                        font-family: '{font_name}';
+                        font-style: {style};
+                        font-weight: {weight};
+                        src: url('{font_url}') format('woff2');
+                        unicode-range: {unicode_range};
+                        font-display: {display};
+                    }}
+                    """))
+
+    return "\n".join(css_rules)
 
 async def handle_css(request):
-    font_family = request.query.get("family", "")
-    display = request.query.get("display", "swap")
+    font_family_list = list(request.query.get("family", "").replace("+", " ").split('|'))
+    font_family_list.sort()
+    font_families: frozenset[str] = frozenset(font_family_list)  # 改集合，去重
+    display: str = request.query.get("display", "swap")
     subsets = request.query.get("subset", "").split(',')
-    font_family = font_family.replace("+", " ")
-    if not font_family:
+
+    if not font_families:
         return web.Response(text="family parameter is required", status=400)
 
     try:
-        css_rules = []
-        for font_spec in set(font_family.split('|')):  # 改集合，去重
-            parts = font_spec.split(':')
-            font_name = parts[0]
-            variants = parts[1].split(',') if len(parts) > 1 else ['400']
-
-            weight, style = "400", "normal"
-            for variant in variants:
-                if 'italic' in variant:
-                    style = "italic"
-                    weight = variant.replace('italic', '') or '400'
-                else:
-                    weight = variant
-
-                font_service: FontService = request.app["font_service"]
-                meta_data_list = font_service.get_meta_data(font_name)
-                # 生成每个子集的@font-face规则
-                for meta_data in meta_data_list:
-                    coverage = meta_data.get("coverage", 1.0)
-                    if coverage <= 0:
-                        continue  # 跳过覆盖率为0的子集
-
-                    font_url = f"/s/{meta_data['woff2_file_name']}"
-                    unicode_range = meta_data["subset_range"]
-                    css_rules.append(dedent(f"""
-                        /* [{meta_data['subset']}] */
-                        @font-face {{
-                            font-family: '{font_name}';
-                            font-style: {style};
-                            font-weight: {weight};
-                            src: url('{font_url}') format('woff2');
-                            unicode-range: {unicode_range};
-                            font-display: {display};
-                        }}
-                        """))
-
-        css = "\n".join(css_rules)
+        css = _generate_css(font_families, display)
         return web.Response(text=css, content_type="text/css")
 
     except Exception as e:
@@ -119,7 +119,6 @@ async def handel_preview(request):
 
 async def handel_font_list(request):
     """列出fonts目录下所有TTF字体并自动演示的handler"""
-    font_service = request.app["font_service"]
     font_dir = font_service.font_dir
 
     try:
@@ -180,9 +179,8 @@ async def cors_middleware(request, handler):
 
 async def init_app():
     app = web.Application(middlewares=[cors_middleware])
-    front_server = app["font_service"] = FontService()
     for ttf in find_files_by_extension(FONT_DIR, ["ttf", "otf"]):
-        front_server.create_subset(ttf.name)
+        font_service.create_subset(ttf.name)
 
     app.router.add_get("/css", handle_css)
     app.router.add_get("/css2", handle_css)

@@ -1,11 +1,12 @@
 import concurrent
+import functools
 import hashlib
 import json
+import logging
 import multiprocessing
 import os
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
-from typing import Dict
 
 from fontTools.subset import Options, Subsetter
 from fontTools.ttLib import TTFont
@@ -18,20 +19,27 @@ DATA_DIR = BASE_DIR / "data"
 FONT_DIR = BASE_DIR / "fonts"
 
 CACHE_DIR = DATA_DIR / "cache"
-METADATA_DIR = DATA_DIR /"meta"
+METADATA_DIR = DATA_DIR / "meta"
+
+# 创建默认logger
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.StreamHandler())
+logger.setLevel(logging.INFO)
+
 
 class FontService:
-    def __init__(self, font_dir=FONT_DIR, cache_dir=CACHE_DIR, meta_dir=METADATA_DIR):
+    def __init__(self, font_dir=FONT_DIR, cache_dir=CACHE_DIR, meta_dir=METADATA_DIR, logger=None):
         self.font_dir = font_dir
         self.cache_dir = cache_dir
         self.meta_dir = meta_dir
+        self.logger = logger or logging.getLogger(__name__)
 
         # 确保目录存在
         os.makedirs(self.font_dir, exist_ok=True)
         os.makedirs(self.cache_dir, exist_ok=True)
         os.makedirs(self.meta_dir, exist_ok=True)
 
-        self.meta_cache:Dict = {}
+        # self.meta_cache:Dict = {}
 
     @staticmethod
     def get_subset_cache_key(font_name, subset_name):
@@ -39,8 +47,7 @@ class FontService:
         key_str = f"{font_name}:{subset_name}"
         return hashlib.md5(key_str.encode('utf-8')).hexdigest()
 
-    @staticmethod
-    def parse_unicode_range(range_str) -> set:
+    def parse_unicode_range(self, range_str) -> set:
         """
         解析Unicode范围字符串，返回单个字符或范围
         支持格式: "U+4e54", "U+300c-300d", "U+91d7-91d8"
@@ -67,7 +74,7 @@ class FontService:
                     end = int(end_hex, 16)
                     result.update(range(start, end + 1))
                 except ValueError:
-                    print(f"无效的范围格式: {part}")
+                    self.logger.warning(f"无效的范围格式: {part}")
             else:
                 # 处理单个字符格式 "U+4e54"
                 char_str = part.strip().upper()
@@ -76,20 +83,8 @@ class FontService:
                 try:
                     result.add(int(hex_val, 16))
                 except ValueError:
-                    print(f"无效的字符格式: {part}")
+                    self.logger.warning(f"无效的字符格式: {part}")
         return result
-
-    # def parse_unicode_str(self, unicode_str):
-    #     result = set()
-    #     unicode_list = unicode_str.strip(",")
-    #     for unicode_str in unicode_list:
-    #         if unicode_str.startswith("U+"):
-    #             if "-" in unicode_str:
-    #                 result.update(self.parse_unicode_range(unicode_str))
-    #             else:
-    #                 unicode_str = unicode_str[2:]
-    #                 result.add(int(unicode_str, 16))
-    #     return result
 
     def get_cached_subset(self, cache_key):
         """检查是否有缓存的子集字体"""
@@ -99,6 +94,7 @@ class FontService:
                 return f.read()
         return None
 
+    @functools.lru_cache()
     def get_font_supported_chars(self, font_path):
         """获取字体实际支持的字符集"""
         font = TTFont(font_path)
@@ -111,7 +107,7 @@ class FontService:
 
     def create_subset(self, font_file_name, force_rebuild: bool = False):
         """创建字体子集（跳过已存在元数据）"""
-        print(f"Start handling font: {font_file_name})")
+        self.logger.info(f"Start handling font: {font_file_name}")
         font_family = font_file_name.removesuffix(".ttf")
         font_family = font_family.removesuffix(".otf")
         _font_path = FONT_DIR / font_file_name
@@ -138,13 +134,13 @@ class FontService:
                     "_font_path": _font_path
                 })
 
-        print(f"Total tasks: {len(tasks)}, Skipped: {skipped_count}")
+        self.logger.info(f"Total tasks: {len(tasks)}, Skipped: {skipped_count}")
 
         # 获取CPU核心数
-        num_cores = int(multiprocessing.cpu_count() / 4 )
+        num_cores = int(multiprocessing.cpu_count() / 4)
 
         if tasks:
-            print(f"Processing {len(tasks)} subsets using {num_cores} cores...")
+            self.logger.info(f"Processing {len(tasks)} subsets using {num_cores} cores...")
 
             # 使用进程池执行任务
             with concurrent.futures.ProcessPoolExecutor(max_workers=num_cores) as executor:
@@ -157,11 +153,12 @@ class FontService:
                     subset_name = futures[future]
                     try:
                         result = future.result()
-                        print(result)
+                        self.logger.info(result)
                     except Exception as e:
-                        print(f"Error processing subset {subset_name}: {str(e)}")
+                        self.logger.error(f"Error processing subset {subset_name}: {str(e)}")
         else:
-            print(f"Font {font_family}. All subsets are already generated. Use force_rebuild=True to regenerate.")
+            self.logger.info(
+                f"Font {font_family}. All subsets are already generated. Use force_rebuild=True to regenerate.")
 
         # 生成元数据文件（跳过已存在的元数据）
         for subset_name, subset in enumerate(SUBSET):
@@ -170,14 +167,14 @@ class FontService:
             meta_data_file_path = meta_data_file_dir / (woff2_file_name + ".json")
             # 检查元数据文件是否需要生成
             if not meta_data_file_path.exists() or force_rebuild:
-            # 计算实际覆盖率
+                # 计算实际覆盖率
                 requested_set = self.parse_unicode_range(subset)
                 if requested_set:
                     supported_set = self.get_font_supported_chars(_font_path)
                     actual_set = requested_set & supported_set
                     coverage = len(actual_set) / len(requested_set)
                 else:
-                    actual_set = 0.0
+                    actual_set = set()
                     coverage = 0.0
 
                 meta_data = {
@@ -202,7 +199,7 @@ class FontService:
         # 解析请求的Unicode范围
         requested_set = self.parse_unicode_range(subset)
         if not requested_set:
-            print(f"跳过空子集 {subset_name}")
+            self.logger.info(f"跳过空子集 {subset_name}")
             return f"跳过空子集 {subset_name}"
 
         supported_set = self.get_font_supported_chars(_font_path)
@@ -215,10 +212,11 @@ class FontService:
             return f"跳过无支持字符的子集 {subset_name}，覆盖率: {coverage:.1%}"
 
         # 记录字符覆盖情况
-        print(f"子集 {subset_name}: 请求字符 {len(requested_set)}，支持 {len(actual_set)}，覆盖率: {coverage:.1%}")
+        self.logger.info(
+            f"子集 {subset_name}: 请求字符 {len(requested_set)}，支持 {len(actual_set)}，覆盖率: {coverage:.1%}")
         if missing_chars:
             missing_hex = [f"U+{hex(c)[2:].upper()}" for c in sorted(missing_chars)]
-            print(f"缺失字符: {', '.join(missing_hex[:10])}{'...' if len(missing_hex) > 10 else ''}")
+            self.logger.info(f"缺失字符: {', '.join(missing_hex[:10])}{'...' if len(missing_hex) > 10 else ''}")
 
         # 生成子集字体
         options = Options()
@@ -236,7 +234,7 @@ class FontService:
             try:
                 subsetter.subset(font)
             except Exception as e:
-                print(f"子集化警告: {str(e)} - 尝试简化处理")
+                self.logger.warning(f"子集化警告: {str(e)} - 尝试简化处理")
                 # 尝试更简单的子集化方法
                 options.drop_tables = []
                 subsetter = Subsetter(options=options)
@@ -251,25 +249,29 @@ class FontService:
 
         except Exception as e:
             error_msg = f"处理子集 {subset_name} 失败: {str(e)}"
-            print(error_msg)
+            self.logger.error(error_msg)
             return error_msg
 
-
-        # TODO
-        # Brotli压缩
-        # compressed_data = brotli.compress(woff2_data)
-
+    @functools.lru_cache()
     def get_meta_data(self, font_family):
         """实测这里不做缓存会导致服务器响应时间1s+"""
-        if font_family not in self.meta_cache.keys():
-            meta_list = [json.loads(meta_file.read_text())\
-                for meta_file in find_files_by_extension(METADATA_DIR / f"{font_family}/", ['json'])]
-            self.meta_cache[font_family] = meta_list
-        else:
-            meta_list = self.meta_cache[font_family]
+        # if font_family not in self.meta_cache.keys():
+        meta_list = [json.loads(meta_file.read_text()) \
+                     for meta_file in find_files_by_extension(METADATA_DIR / f"{font_family}/", ['json'])]
         return meta_list
+        #     self.meta_cache[font_family] = meta_list
+        # else:
+        #     meta_list = self.meta_cache[font_family]
+        # return meta_list
+
 
 if __name__ == "__main__":
+    # 配置默认日志
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
     font_service = FontService()
     # font_service.create_subset("OpenSans")
     font_service.create_subset("Satisfy.ttf")
