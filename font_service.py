@@ -141,7 +141,7 @@ class FontService:
         print(f"Total tasks: {len(tasks)}, Skipped: {skipped_count}")
 
         # 获取CPU核心数
-        num_cores = int(multiprocessing.cpu_count() / 2 )
+        num_cores = int(multiprocessing.cpu_count() / 4 )
 
         if tasks:
             print(f"Processing {len(tasks)} subsets using {num_cores} cores...")
@@ -168,19 +168,18 @@ class FontService:
             subset_name = str(subset_name)
             woff2_file_name = f"{self.get_subset_cache_key(font_family, subset_name)}"
             meta_data_file_path = meta_data_file_dir / (woff2_file_name + ".json")
-
-            # 计算实际覆盖率
-            requested_set = self.parse_unicode_range(subset)
-            if requested_set:
-                supported_set = self.get_font_supported_chars(_font_path)
-                actual_set = requested_set & supported_set
-                coverage = len(actual_set) / len(requested_set)
-            else:
-                actual_set = 0.0
-                coverage = 0.0
-
             # 检查元数据文件是否需要生成
             if not meta_data_file_path.exists() or force_rebuild:
+            # 计算实际覆盖率
+                requested_set = self.parse_unicode_range(subset)
+                if requested_set:
+                    supported_set = self.get_font_supported_chars(_font_path)
+                    actual_set = requested_set & supported_set
+                    coverage = len(actual_set) / len(requested_set)
+                else:
+                    actual_set = 0.0
+                    coverage = 0.0
+
                 meta_data = {
                     "font_family": font_family,
                     "subset_range": subset,
